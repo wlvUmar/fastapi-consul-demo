@@ -5,7 +5,10 @@ from fastapi import FastAPI
 
 from .config import settings
 from .infrastructure import registration
+from .infrastructure.logging import setup_logging
 from .routes import router
+
+setup_logging(settings.service_id)
 
 
 @asynccontextmanager

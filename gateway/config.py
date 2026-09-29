@@ -6,9 +6,8 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = 8000
-    service_a_url: str = "http://localhost:8001"
-    service_b_url: str = "http://localhost:8002"
-    service_c_url: str = "http://localhost:8003"
+    consul_host: str = "127.0.0.1"
+    consul_port: int = 8500
     request_timeout: float = 5.0
 
 

@@ -5,7 +5,10 @@ from fastapi import FastAPI
 
 from .config import settings
 from .infrastructure.http_client import close_client, init_client
+from .infrastructure.logging import setup_logging
 from .routes import router
+
+setup_logging("gateway")
 
 
 @asynccontextmanager

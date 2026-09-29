@@ -1,30 +1,32 @@
-# FastAPI Microservices + Gateway (Consul-ready)
+# FastAPI Microservices + Gateway (Consul discovery)
 
 Three independent dummy microservices (A, B, C) plus an API Gateway.
-Service discovery is environment-based for now; the architecture has
-dedicated seams for adding Consul registration/discovery later
-without restructuring.
+Services register themselves with Consul on startup and deregister on
+shutdown; the gateway resolves downstream addresses through Consul at
+request time. Logging uses `colorlog` throughout.
 
 ## Structure
 
 ```text
 services/service_a|service_b|service_c/
-  main.py            # app factory + lifespan (Consul hook point)
-  config.py          # env-based settings (name, host, port)
+  main.py            # app factory + lifespan (register/deregister)
+  config.py          # env-based settings (name, id, host, port, consul)
   schemas.py         # InfoResponse, HealthResponse
   service.py         # business logic (builds payloads)
   routes.py          # GET /info, GET /health (thin handlers)
   infrastructure/
-    registration.py  # no-op stub; Consul registration goes here
+    registration.py  # Consul register/deregister via agent API
+    logging.py       # colorlog setup
 gateway/
   main.py            # app factory + lifespan (httpx client lifecycle)
-  config.py          # SERVICE_A/B/C_URL, REQUEST_TIMEOUT
+  config.py          # CONSUL_HOST/PORT, REQUEST_TIMEOUT
   routes.py          # GET /service-a|b|c/info (thin handlers)
   service.py         # forwards to downstream via resolver + httpx
   schemas.py         # ErrorResponse
   infrastructure/
-    discovery.py     # ServiceResolver protocol + EnvServiceResolver
+    discovery.py     # ServiceResolver protocol + ConsulServiceResolver
     http_client.py   # shared httpx.AsyncClient
+    logging.py       # colorlog setup
 ```
 
 ## Setup
@@ -35,9 +37,15 @@ python -m venv .venv
 Copy-Item .env.example .env   # optional
 ```
 
+Start a local Consul agent (dev mode) first:
+
+```powershell
+consul agent -dev
+```
+
 ## Run
 
-From the project root, one terminal each:
+From the project root, one terminal each (after Consul is up):
 
 ```powershell
 .\.venv\Scripts\python -m uvicorn services.service_a.main:app --host 127.0.0.1 --port 8001
@@ -45,6 +53,10 @@ From the project root, one terminal each:
 .\.venv\Scripts\python -m uvicorn services.service_c.main:app --host 127.0.0.1 --port 8003
 .\.venv\Scripts\python -m uvicorn gateway.main:app --host 127.0.0.1 --port 8000
 ```
+
+Watch each terminal: services log `registering` / `registered` on startup
+and `deregistering` / `deregistered` on shutdown; the gateway logs
+`resolving` / `resolved` per request and `forwarding` lines.
 
 ## Endpoints
 
@@ -58,33 +70,35 @@ From the project root, one terminal each:
 
 ## Configuration
 
-| Variable          | Used by | Default                 |
-| ----------------- | ------- | ----------------------- |
-| `HOST` / `PORT`   | service | `127.0.0.1` / per-svc  |
-| `SERVICE_NAME`    | service | `Service A` (B, C…)    |
-| `SERVICE_A_URL`   | gateway | `http://localhost:8001` |
-| `SERVICE_B_URL`   | gateway | `http://localhost:8002` |
-| `SERVICE_C_URL`   | gateway | `http://localhost:8003` |
-| `REQUEST_TIMEOUT` | gateway | `5.0` (seconds)         |
+| Variable          | Used by      | Default                 |
+| ----------------- | ------------ | ----------------------- |
+| `HOST` / `PORT`   | service      | `127.0.0.1` / per-svc  |
+| `SERVICE_NAME`    | service      | `Service A` (B, C…)    |
+| `SERVICE_ID`      | service      | `service-a` (b, c…)    |
+| `SERVICE_ADDRESS` | service      | `127.0.0.1`            |
+| `CONSUL_HOST`     | all          | `127.0.0.1`            |
+| `CONSUL_PORT`     | all          | `8500`                 |
+| `REQUEST_TIMEOUT` | gateway      | `5.0` (seconds)         |
 
 ## Gateway error handling
 
-| Situation              | Gateway status |
-| ---------------------- | -------------- |
-| Downstream unreachable | `503`          |
-| Downstream timeout     | `504`          |
-| Downstream HTTP error  | `502`          |
-| Unknown service key    | `500`          |
+| Situation                        | Gateway status |
+| -------------------------------- | -------------- |
+| Consul unreachable / no instance | `503`          |
+| Downstream unreachable           | `503`          |
+| Downstream timeout               | `504`          |
+| Downstream HTTP error            | `502`          |
 
-## Adding Consul later
+## Consul
 
-* **Services:** implement `register()` / `deregister()` in
-  `services/<svc>/infrastructure/registration.py`. `main.py`
-  already calls them in `lifespan`; nothing else changes.
-* **Gateway:** add a `ConsulServiceResolver` implementing the
-  `ServiceResolver` protocol in `gateway/infrastructure/discovery.py`
-  and return it from `get_resolver()`. Routes and `service.py`
-  stay untouched.
+* **Services:** `lifespan` in `main.py` calls `register()` on startup
+  (PUT `/v1/agent/service/register` with an HTTP `/health` check) and
+  `deregister()` on shutdown. Registration failures are logged and do
+  not crash the service.
+* **Gateway:** `get_resolver()` returns a `ConsulServiceResolver` that
+  queries `/v1/health/service/<name>?passing=1` and picks a random
+  healthy instance (naive client-side load balancing). To point at a
+  different agent, set `CONSUL_HOST` / `CONSUL_PORT`.
 
 ## Reference
 
