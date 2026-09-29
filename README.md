@@ -85,3 +85,7 @@ From the project root, one terminal each:
   `ServiceResolver` protocol in `gateway/infrastructure/discovery.py`
   and return it from `get_resolver()`. Routes and `service.py`
   stay untouched.
+
+## Reference
+
+Assignment spec: <https://roadmap.sh/projects/service-discovery>
